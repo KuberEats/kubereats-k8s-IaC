@@ -2,6 +2,13 @@
 
 Configuration and documentation for how to set up Kubernetes on Proxmox with Cloud Init, Ubuntu, TerraForm and Ansible
 
+
+## Kubereats Target Architecture
+
+This fork is configured for the Kubereats on-prem Kubernetes VM layer across two Proxmox hosts, with four edge ingress-capable workers prepared for a future GCP Global HTTPS Load Balancer + Hybrid NEG path. See [docs/kubereats-architecture.md](docs/kubereats-architecture.md) for the VM inventory, IP plan, Terraform outputs, Ansible command sequence, and current HA limitations.
+
+This repository intentionally does not manage PostgreSQL, DB VMs, Patroni, pgBackRest, GCS backup, Redis, GCP load balancer resources, or production MetalLB ingress.
+
 ## Advisory
 
 This set of instructions has been tested on Ubuntu VMs running on Proxmox, and cloned using cloud-init.
@@ -70,6 +77,8 @@ chmod 400 tf-cloud-init
 ```
 
 ## Terraform Setup
+Kubereats-specific Terraform defaults now live in `terraform/vars.tf` and are documented in `docs/kubereats-architecture.md`. Use that architecture note as the authoritative command sequence and inventory for this fork; some older upstream examples below are retained for general background only.
+
 
 Terraform will do the heavy lifting with creating the VMs for the Kubernetes cluster.
 Customise the main.tf with Proxmox Provider details:
@@ -92,6 +101,8 @@ terraform apply
 Confirm the terraform apply by typing "yes" and wait for the cloning to complete.
 
 ## Ansible Setup
+For this fork, `ansible/k8s-inventory.yml` defines `k8s-cp-01` as the bootstrap control plane, `k8s-cp-02` as a control-plane candidate, and four edge ingress-capable workers. The current playbooks keep the single-bootstrap kubeadm flow and do not perform `kubeadm join --control-plane`.
+
 
 Ansible is used to setup Kubernetes, and this part of the setup can effectively be used on any appropriate machines, physical or virtual.
 

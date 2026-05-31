@@ -1,159 +1,162 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Variables - modify these as needed
-MASTER_NODE="192.168.5.230"
-WORKER_NODES=("192.168.5.231" "192.168.5.232" "192.168.5.233")
-SSH_USER="user"
+# Bootstrap control plane. k8s-cp-02 is provisioned as a future control-plane
+# candidate, but this script intentionally joins workers only.
+MASTER_NODE="192.168.17.11"
+SSH_USER="kubereats"
 SSH_OPTIONS="-o StrictHostKeyChecking=no -i tf-cloud-init"
 LOCAL_KUBE_DIR="$HOME/.kube"
 LOCAL_KUBE_CONFIG="$LOCAL_KUBE_DIR/config"
 
-# Function to check if command exists
+# Format: KubernetesNodeName=NodeIPAddress
+WORKER_NODES=(
+  "k8s-worker-a1=192.168.17.21"
+  "k8s-worker-a2=192.168.17.22"
+  "k8s-worker-b1=192.168.17.31"
+  "k8s-worker-b2=192.168.17.32"
+)
+
+HYBRID_NEG_ENDPOINTS=(
+  "192.168.17.21:30443"
+  "192.168.17.22:30443"
+  "192.168.17.31:30443"
+  "192.168.17.32:30443"
+)
+
 command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# Check for required dependencies
-for cmd in ssh sshpass; do
-  if ! command_exists $cmd; then
-    echo "Error: Required command '$cmd' not found. Please install it and try again."
+for cmd in ssh scp; do
+  if ! command_exists "$cmd"; then
+    echo "Error: required command '$cmd' not found. Please install it and try again."
     exit 1
   fi
 done
 
-echo "=== Kubernetes Node Join Script ==="
+echo "=== Kubernetes Worker Join Script ==="
+echo "Bootstrap control plane: $MASTER_NODE"
 echo ""
 
-# Function to check if node is already in the cluster
 check_node_exists() {
   local node_name=$1
-  local node_check=$(ssh $SSH_OPTIONS $SSH_USER@$MASTER_NODE "sudo kubectl get nodes -o wide | grep -w $node_name || echo 'NotFound'")
-  
-  if [[ $node_check != *"NotFound"* ]]; then
+  local node_check
+  node_check=$(ssh $SSH_OPTIONS "$SSH_USER@$MASTER_NODE" "sudo kubectl get nodes -o wide | grep -w '$node_name' || true")
+
+  if [[ -n "$node_check" ]]; then
     echo "Node $node_name is already part of the cluster with status:"
     echo "$node_check"
-    return 0  # Node exists
-  else
-    return 1  # Node does not exist
+    return 0
   fi
+
+  return 1
 }
 
-# Function to check if kubelet is active on the worker node
 check_kubelet_active() {
-  local node=$1
-  local kubelet_status=$(ssh $SSH_OPTIONS $SSH_USER@$node "sudo systemctl is-active kubelet || echo 'inactive'")
-  
-  if [[ $kubelet_status == "active" ]]; then
-    echo "Kubelet is already active on $node. Node may be part of a cluster."
-    return 0  # Kubelet is active
-  else
-    echo "Kubelet is not active on $node."
-    return 1  # Kubelet is not active
+  local node_ip=$1
+  local kubelet_status
+  kubelet_status=$(ssh $SSH_OPTIONS "$SSH_USER@$node_ip" "sudo systemctl is-active kubelet || echo inactive")
+
+  if [[ "$kubelet_status" == "active" ]]; then
+    echo "Kubelet is already active on $node_ip. Node may be part of a cluster."
+    return 0
   fi
+
+  echo "Kubelet is not active on $node_ip."
+  return 1
 }
 
-# Get join command from master node
-echo "Retrieving join command from master node..."
-JOIN_COMMAND=$(ssh $SSH_OPTIONS $SSH_USER@$MASTER_NODE "sudo kubeadm token create --print-join-command")
+echo "Retrieving join command from bootstrap control plane..."
+JOIN_COMMAND=$(ssh $SSH_OPTIONS "$SSH_USER@$MASTER_NODE" "sudo kubeadm token create --print-join-command")
 
-if [ -z "$JOIN_COMMAND" ]; then
-  echo "Error: Failed to retrieve join command from master node."
+if [[ -z "$JOIN_COMMAND" ]]; then
+  echo "Error: failed to retrieve join command from bootstrap control plane."
   exit 1
 fi
 
 echo "Retrieved join command successfully."
 echo ""
 
-# Join each worker node to the cluster
-for node in "${WORKER_NODES[@]}"; do
-  echo "Processing node $node..."
-  
-  # Check if node is reachable
-  if ! ssh $SSH_OPTIONS $SSH_USER@$node "exit" >/dev/null 2>&1; then
-    echo "Warning: Cannot connect to $node. Skipping..."
+for node_entry in "${WORKER_NODES[@]}"; do
+  node_name="${node_entry%%=*}"
+  node_ip="${node_entry#*=}"
+
+  echo "Processing $node_name ($node_ip)..."
+
+  if ! ssh $SSH_OPTIONS "$SSH_USER@$node_ip" "exit" >/dev/null 2>&1; then
+    echo "Warning: cannot connect to $node_ip. Skipping $node_name."
     continue
   fi
-  
-  # Check if node is already part of the cluster
-  if check_node_exists $node; then
-    echo "Skipping join process for $node."
+
+  if check_node_exists "$node_name"; then
+    echo "Skipping join process for $node_name."
+    echo ""
     continue
   fi
-  
-  # Check if kubelet is active on the node
-  if check_kubelet_active $node; then
-    echo "Kubelet is active but node is not in cluster. Resetting Kubernetes on $node..."
-    ssh $SSH_OPTIONS $SSH_USER@$node "sudo kubeadm reset -f"
-    echo "Reset completed on $node."
+
+  if check_kubelet_active "$node_ip"; then
+    echo "Kubelet is active but $node_name is not registered. Resetting Kubernetes on $node_name..."
+    ssh $SSH_OPTIONS "$SSH_USER@$node_ip" "sudo kubeadm reset -f"
+    echo "Reset completed on $node_name."
   fi
-  
-  # Run join command on the worker node
-  echo "Joining $node to the cluster..."
-  ssh $SSH_OPTIONS $SSH_USER@$node "sudo $JOIN_COMMAND"
-  
-  if [ $? -eq 0 ]; then
-    echo "Successfully joined $node to the cluster!"
-    
-    # Verify the node was actually added
-    sleep 10  # Give some time for node to register
-    if check_node_exists $node; then
-      echo "Verified $node is now part of the cluster."
-    else
-      echo "Warning: $node was not found in the cluster after join command."
-    fi
+
+  echo "Joining $node_name ($node_ip) to the cluster..."
+  ssh $SSH_OPTIONS "$SSH_USER@$node_ip" "sudo $JOIN_COMMAND"
+
+  echo "Join command completed for $node_name. Verifying registration..."
+  sleep 10
+  if check_node_exists "$node_name"; then
+    echo "Verified $node_name is now part of the cluster."
   else
-    echo "Failed to join $node to the cluster."
+    echo "Warning: $node_name was not found in the cluster after join command."
   fi
-  
+
   echo ""
 done
 
-# Verify final cluster status
 echo "Final cluster status:"
-ssh $SSH_OPTIONS $SSH_USER@$MASTER_NODE "sudo kubectl get nodes -o wide"
+ssh $SSH_OPTIONS "$SSH_USER@$MASTER_NODE" "sudo kubectl get nodes -o wide"
+
+echo ""
+echo "Planned GCP Hybrid NEG ingress endpoints:"
+printf '  %s
+' "${HYBRID_NEG_ENDPOINTS[@]}"
 
 echo ""
 echo "=== Copying Kubernetes admin config to local machine ==="
 
-# Create local .kube directory if it doesn't exist
-if [ ! -d "$LOCAL_KUBE_DIR" ]; then
+if [[ ! -d "$LOCAL_KUBE_DIR" ]]; then
   echo "Creating local directory $LOCAL_KUBE_DIR..."
   mkdir -p "$LOCAL_KUBE_DIR"
 fi
 
-# Backup existing config if it exists
-if [ -f "$LOCAL_KUBE_CONFIG" ]; then
+if [[ -f "$LOCAL_KUBE_CONFIG" ]]; then
   echo "Backing up existing kubectl config to ${LOCAL_KUBE_CONFIG}.bak..."
   cp "$LOCAL_KUBE_CONFIG" "${LOCAL_KUBE_CONFIG}.bak"
 fi
 
-# Create a temporary file on the master node with correct permissions
 echo "Creating a temporary copy of admin.conf with correct permissions..."
-ssh $SSH_OPTIONS $SSH_USER@$MASTER_NODE "sudo cp /etc/kubernetes/admin.conf /tmp/k8s-admin.conf && sudo chmod 644 /tmp/k8s-admin.conf && sudo chown $SSH_USER:$SSH_USER /tmp/k8s-admin.conf"
+ssh $SSH_OPTIONS "$SSH_USER@$MASTER_NODE" "sudo cp /etc/kubernetes/admin.conf /tmp/k8s-admin.conf && sudo chmod 644 /tmp/k8s-admin.conf && sudo chown $SSH_USER:$SSH_USER /tmp/k8s-admin.conf"
 
-# Copy the temporary admin.conf from master to local machine
 echo "Copying Kubernetes admin config from $MASTER_NODE to local machine..."
-scp $SSH_OPTIONS $SSH_USER@$MASTER_NODE:"/tmp/k8s-admin.conf" "$LOCAL_KUBE_CONFIG"
+scp $SSH_OPTIONS "$SSH_USER@$MASTER_NODE:/tmp/k8s-admin.conf" "$LOCAL_KUBE_CONFIG"
 
-# Clean up the temporary file
-ssh $SSH_OPTIONS $SSH_USER@$MASTER_NODE "rm /tmp/k8s-admin.conf"
+ssh $SSH_OPTIONS "$SSH_USER@$MASTER_NODE" "rm /tmp/k8s-admin.conf"
 
-if [ -f "$LOCAL_KUBE_CONFIG" ]; then
+if [[ -f "$LOCAL_KUBE_CONFIG" ]]; then
   echo "Successfully copied admin.conf to $LOCAL_KUBE_CONFIG"
   chmod 600 "$LOCAL_KUBE_CONFIG"
-  echo "You can now run kubectl commands from your local machine."
-  
-  # Test the connection
+
   if command_exists kubectl; then
     echo "Testing connection to cluster..."
     kubectl --kubeconfig="$LOCAL_KUBE_CONFIG" get nodes
   else
-    echo "kubectl not found. Please install it to manage your cluster from this machine."
+    echo "kubectl not found. Install it to manage your cluster from this machine."
   fi
 else
-  echo "Failed to copy admin.conf from master node."
+  echo "Failed to copy admin.conf from bootstrap control plane."
 fi
 
 echo ""
-echo "=== Node join process completed ==="
+echo "=== Worker join process completed ==="

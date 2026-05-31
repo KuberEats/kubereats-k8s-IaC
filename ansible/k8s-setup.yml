@@ -3,6 +3,29 @@
       hosts: all
       become: true
       tasks:
+        - name: Ensure br_netfilter is loaded at boot
+          copy:
+            dest: /etc/modules-load.d/k8s-br-netfilter.conf
+            content: |
+              br_netfilter
+            mode: '0644'
+
+        - name: Load br_netfilter kernel module
+          command: modprobe br_netfilter
+          changed_when: false
+
+        - name: Set sysctl for Kubernetes bridging (required by Flannel/CNI)
+          sysctl:
+            name: "{{ item.key }}"
+            value: "{{ item.value }}"
+            state: present
+            sysctl_file: /etc/sysctl.d/99-kubernetes-bridge.conf
+            reload: true
+          loop:
+            - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+            - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+            - { key: 'net.ipv4.ip_forward', value: '1' }
+
         - name: Update apt cache and upgrade packages
           apt:
             update_cache: yes
@@ -34,7 +57,7 @@
 
         - name: Download Kubernetes GPG key
           get_url:
-            url: https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key
+            url: https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key
             dest: /tmp/k8s-release.key
             mode: '0644'
           when: not gpg_key.stat.exists

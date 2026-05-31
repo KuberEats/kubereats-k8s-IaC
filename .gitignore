@@ -1,0 +1,45 @@
+# Terraform local files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform plans
+*.tfplan
+plan.out
+
+# SSH keys and certificates
+tf-cloud-init
+tf-cloud-init.pub
+*.pem
+*.key
+*.crt
+*.csr
+
+# Ansible local secrets
+*.vault
+.vault-password
+vault-password.txt
+ansible/*.retry
+*.retry
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

@@ -1,32 +1,74 @@
 ---
 all:
   children:
+    k8s_bootstrap_control_plane:
+      hosts:
+        k8s-cp-01:
+          ansible_host: 192.168.17.11
+          failure_domain: pve-a
+          bootstrap_control_plane: true
+
+    k8s_control_plane_candidates:
+      hosts:
+        k8s-cp-02:
+          ansible_host: 192.168.17.12
+          failure_domain: pve-b
+          bootstrap_control_plane: false
+          control_plane_join_required: true
+
+    # Compatibility group used by k8s-master.yml. Keep this limited to the
+    # bootstrap control plane until kubeadm HA join is implemented.
     k8s_master:
+      children:
+        k8s_bootstrap_control_plane: {}
+
+    k8s_control_plane:
+      children:
+        k8s_bootstrap_control_plane: {}
+        k8s_control_plane_candidates: {}
+
+    edge_ingress_workers:
       hosts:
-        k8s-master:
-          ansible_host: 192.168.5.230
-    
+        k8s-worker-a1:
+          ansible_host: 192.168.17.21
+          failure_domain: pve-a
+          edge_ingress: true
+          hybrid_neg_endpoint: 192.168.17.21:30443
+        k8s-worker-a2:
+          ansible_host: 192.168.17.22
+          failure_domain: pve-a
+          edge_ingress: true
+          hybrid_neg_endpoint: 192.168.17.22:30443
+        k8s-worker-b1:
+          ansible_host: 192.168.17.31
+          failure_domain: pve-b
+          edge_ingress: true
+          hybrid_neg_endpoint: 192.168.17.31:30443
+        k8s-worker-b2:
+          ansible_host: 192.168.17.32
+          failure_domain: pve-b
+          edge_ingress: true
+          hybrid_neg_endpoint: 192.168.17.32:30443
+
+    # Compatibility group used by existing docs/scripts.
     k8s_nodes:
-      hosts:
-        k8s-node1:
-          ansible_host: 192.168.5.231
-        k8s-node2:
-          ansible_host: 192.168.5.232
-        k8s-node3:
-          ansible_host: 192.168.5.233
-    
+      children:
+        edge_ingress_workers: {}
+
     k8s_cluster:
       children:
-        k8s_master: {}
+        k8s_control_plane: {}
         k8s_nodes: {}
       vars:
-        cluster_network: 192.168.5.0/24
+        cluster_network: 192.168.16.0/20
         pod_network_cidr: 10.244.0.0/16
-        kubernetes_version: 1.30.0
-  
+        kubernetes_version: 1.32.0
+        reserved_k8s_api_vip: 192.168.17.230
+        optional_metallb_pool: 192.168.17.240-192.168.17.249
+        production_ingress_nodeport: 30443
+
   vars:
-    ansible_user: user
-    ansible_password: Password123
-    ansible_become: true
-    ansible_become_password: Password123
+    ansible_user: kubereats
+    ansible_ssh_private_key_file: ../tf-cloud-init
     ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+    ansible_become: true

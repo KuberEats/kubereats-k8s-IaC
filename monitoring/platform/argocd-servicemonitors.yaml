@@ -1,0 +1,104 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubereats-argocd-application-controller
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: kubereats-argocd-application-controller
+    app.kubernetes.io/part-of: kubereats-platform-monitoring
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - argocd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubereats-argocd-server
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: kubereats-argocd-server
+    app.kubernetes.io/part-of: kubereats-platform-monitoring
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - argocd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-server-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubereats-argocd-repo-server
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: kubereats-argocd-repo-server
+    app.kubernetes.io/part-of: kubereats-platform-monitoring
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - argocd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubereats-argocd-applicationset-controller
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: kubereats-argocd-applicationset-controller
+    app.kubernetes.io/part-of: kubereats-platform-monitoring
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - argocd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-applicationset-controller
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubereats-argocd-notifications-controller
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: kubereats-argocd-notifications-controller
+    app.kubernetes.io/part-of: kubereats-platform-monitoring
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - argocd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-notifications-controller-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

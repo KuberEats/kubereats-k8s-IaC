@@ -1,0 +1,203 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubereats-platform-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: kubereats-platform-alerts
+    app.kubernetes.io/part-of: kubereats-platform-monitoring
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: kubereats.kubernetes.platform
+      rules:
+        - alert: KubereatsK8sNodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Kubernetes node is not Ready
+            description: Node {{ $labels.node }} has not reported Ready for at least 10 minutes.
+
+        - alert: KubereatsK8sPodCrashLooping
+          expr: max_over_time(kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}[10m]) >= 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kubernetes pod is crash looping
+            description: Pod {{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} has been in CrashLoopBackOff.
+
+        - alert: KubereatsK8sDeploymentReplicasMismatch
+          expr: kube_deployment_spec_replicas > kube_deployment_status_replicas_available
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kubernetes deployment replicas are unavailable
+            description: Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has fewer available replicas than desired for at least 15 minutes.
+
+        - alert: KubereatsK8sPodRestartHigh
+          expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kubernetes pod restart rate is high
+            description: Pod {{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} restarted more than 3 times in 15 minutes.
+
+        - alert: KubereatsK8sKubeletDown
+          expr: up{job="kubelet"} == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Kubernetes kubelet target is down
+            description: Kubelet scrape target {{ $labels.instance }} has been down for at least 10 minutes.
+
+        - alert: KubereatsCoreDNSDown
+          expr: up{job="coredns"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: CoreDNS target is down
+            description: CoreDNS target {{ $labels.instance }} has been down for at least 5 minutes.
+
+        - alert: KubereatsCoreDNSErrorRateHigh
+          expr: sum(rate(coredns_dns_responses_total{rcode=~"SERVFAIL|REFUSED|FORMERR"}[5m])) / clamp_min(sum(rate(coredns_dns_responses_total[5m])), 1) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: CoreDNS error rate is high
+            description: CoreDNS error responses are above 5% for at least 10 minutes.
+
+        - alert: KubereatsIngressControllerDown
+          expr: kube_deployment_status_replicas_available{namespace=~"ingress-nginx|nginx-ingress", deployment=~".*controller.*"} < 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Ingress controller is unavailable
+            description: An ingress controller deployment has no available replicas for at least 15 minutes.
+
+        - alert: KubereatsIngress5xxHigh
+          expr: sum(rate(nginx_ingress_controller_requests{status=~"5.."}[5m])) / clamp_min(sum(rate(nginx_ingress_controller_requests[5m])), 1) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Ingress 5xx rate is high
+            description: Ingress 5xx responses are above 5% for at least 10 minutes.
+
+        - alert: KubereatsMetalLBDown
+          expr: kube_daemonset_status_number_ready{namespace="metallb-system", daemonset=~".*speaker.*"} < 1 or kube_deployment_status_replicas_available{namespace="metallb-system", deployment=~".*controller.*"} < 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: MetalLB component is unavailable
+            description: A MetalLB controller or speaker component has been unavailable for at least 15 minutes.
+
+        - alert: KubereatsCertManagerCertificateExpiringSoon
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) < 14 * 24 * 60 * 60
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: cert-manager certificate expires soon
+            description: Certificate {{ $labels.namespace }}/{{ $labels.name }} expires in less than 14 days.
+
+        - alert: KubereatsPVCUsageHigh
+          expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 85
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kubernetes PVC usage is high
+            description: PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is above 85% used.
+
+    - name: kubereats.argocd
+      rules:
+        - alert: KubereatsArgoCDAppDegraded
+          expr: argocd_app_info{health_status="Degraded"} == 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD application is degraded
+            description: ArgoCD application {{ $labels.name }} in project {{ $labels.project }} has been Degraded for at least 10 minutes.
+
+        - alert: KubereatsArgoCDAppOutOfSync
+          expr: argocd_app_info{sync_status!="Synced"} == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD application is out of sync
+            description: ArgoCD application {{ $labels.name }} has not been Synced for at least 15 minutes.
+
+        - alert: KubereatsArgoCDAppSyncFailed
+          expr: increase(argocd_app_sync_total{phase!="Succeeded"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD application sync failed
+            description: One or more ArgoCD application syncs failed in the last 10 minutes.
+
+        - alert: KubereatsArgoCDServerDown
+          expr: up{namespace="argocd", service="argocd-server-metrics"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD server metrics target is down
+            description: Prometheus cannot scrape argocd-server-metrics.
+
+        - alert: KubereatsArgoCDRepoServerDown
+          expr: up{namespace="argocd", service="argocd-repo-server"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD repo-server metrics target is down
+            description: Prometheus cannot scrape argocd-repo-server metrics.
+
+        - alert: KubereatsArgoCDApplicationControllerDown
+          expr: up{namespace="argocd", service="argocd-metrics"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD application-controller metrics target is down
+            description: Prometheus cannot scrape argocd-metrics.
+
+        - alert: KubereatsArgoCDRedisDown
+          expr: kube_deployment_status_replicas_available{namespace="argocd", deployment="argocd-redis"} < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD redis deployment is unavailable
+            description: ArgoCD redis has no available replicas for at least 5 minutes.
+
+        - alert: KubereatsArgoCDAppReconcileSlow
+          expr: histogram_quantile(0.95, sum(rate(argocd_app_reconcile_bucket[10m])) by (le)) > 60
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD app reconciliation is slow
+            description: ArgoCD app reconciliation p95 latency has exceeded 60 seconds for at least 15 minutes.
+
+        - alert: KubereatsArgoCDGitFetchFailures
+          expr: increase(argocd_git_fetch_fail_total[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD Git fetch failures detected
+            description: ArgoCD reported Git fetch failures in the last 10 minutes.

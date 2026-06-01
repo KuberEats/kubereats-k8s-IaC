@@ -1,0 +1,69 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubereats-k8s-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: kubereats.kubernetes
+      rules:
+        - alert: KubereatsK8sNodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Kubernetes node is not Ready
+            description: Node {{ $labels.node }} has not reported Ready for at least 10 minutes.
+
+        - alert: KubereatsK8sPodCrashLooping
+          expr: max_over_time(kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}[10m]) >= 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kubernetes pod is crash looping
+            description: Pod {{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} has been in CrashLoopBackOff.
+
+        - alert: KubereatsK8sDeploymentReplicasMismatch
+          expr: kube_deployment_spec_replicas > kube_deployment_status_replicas_available
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kubernetes deployment replicas are unavailable
+            description: Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has fewer available replicas than desired for at least 15 minutes.
+
+        - alert: KubereatsK8sPodRestartHigh
+          expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kubernetes pod restart rate is high
+            description: Pod {{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} restarted more than 3 times in 15 minutes.
+
+        - alert: KubereatsK8sKubeletDown
+          expr: up{job="kubelet"} == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Kubernetes kubelet target is down
+            description: Kubelet scrape target {{ $labels.instance }} has been down for at least 10 minutes.
+
+        - alert: KubereatsK8sPersistentVolumeUsageHigh
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes
+              /
+              kubelet_volume_stats_capacity_bytes
+            ) * 100 > 85
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Kubernetes persistent volume usage is high
+            description: Persistent volume claim {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is above 85% used.
